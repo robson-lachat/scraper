@@ -1,0 +1,25 @@
+# --- Python & Ambiente ---
+__pycache__/
+*.py[cod]
+*$py.class
+# Ignora sua pasta de ambiente virtual que está na raiz
+venv/
+
+# --- Segredos & Configurações (CRÍTICO) ---
+# Jamais suba suas chaves do Mistral AI
+.env
+
+# --- Arquivos Temporários de Scraping ---
+# Ignora toda a pasta tmp (onde estão os HTMLs e JSONs)
+tmp/
+*.html
+*.json
+
+# --- Ferramentas & IDEs ---
+.vscode/
+.idea/
+.DS_Store
+
+# --- Poetry ---
+# O poetry.lock DEVE ser versionado, mas outros arquivos de config local não
+.poetry/
