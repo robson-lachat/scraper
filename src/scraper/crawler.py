@@ -75,11 +75,12 @@ def extract_article_data_with_bs(article) -> dict:
     return None
 
 
-# def extract_article_data(url:str):
-#     html = get_html_with_playright(url)
-#     articles = get_articles(html_content)
-#     results = [extract_article_data_with_bs(article) fro article in articles]
-#     return
+def extract_article_data(url:str):
+    html_content = get_html_with_playright(url)
+    articles = get_articles(html_content)
+    results = [extract_article_data_with_bs(article) for article in articles]
+    return results
+
 
 def extract_one_article_with_ll(article_obj) -> dict:
     """
@@ -103,7 +104,9 @@ def extract_one_article_with_ll(article_obj) -> dict:
         chat_response = client.chat.complete(
             model=model,
             messages=[
-                {"role": "user", "content": prompt},
+                {"role": "user",
+                 "content": prompt
+                },
             ],
             response_format={"type": "json_object"} 
         )
@@ -121,6 +124,7 @@ client_lc = ChatMistralAI(
     temperature=0,
     max_retries=2
     )
+
 from pydantic import BaseModel, Field
 
 class DATArticle(BaseModel):
@@ -131,7 +135,7 @@ class DATArticle(BaseModel):
 # Function for extract in big strutured
 def stract_one_article_data_with_structured_llm(article: str):
     prompt= f"""
-    Given an article on an e-comerce website, in html forma, as in the <ARTICLE> selection below.
+    Given an article on an e-comerce website, in html format, as in the <ARTICLE> selection below.
     Your task is to extract the information into a json followin the format:
     {DATArticle.model_json_schema()}
     <ARTICLE>
@@ -143,7 +147,7 @@ def stract_one_article_data_with_structured_llm(article: str):
 
 if __name__ == "__main__":
     
-    # url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
+    url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
 
     file_path = "tmp/5090_p.html"
     
@@ -188,20 +192,20 @@ if __name__ == "__main__":
         
         print(f"\n--- Starting Mistral AI Extraction ---")
         
-        # Limitamos a 3 para teste inicial e economia de tokens
+        # We limited it to 3 for initial testing and token conservation.
         count = 0
         for art in articles:
-            # Filtro básico antes de mandar para a IA economiza processamento
-            if "5090" in art.get_text() and count < 3:
+            # Basic filter afther to send for IA (processse economyc)
+            if "5090" in art.get_text() and count < 5:
                 print(f"Analyzing item {count + 1} with IA...")
                 data = extract_one_article_with_ll(art)
                 
-                # Se a IA retornar o objeto (e não null), adicionamos
+                # If the AI ​​returns the object (and not null), we add
                 if data and data != "null":
                     results.append(data)
                     count += 1
 
-        # Salva o resultado final em JSON
+        # Save final results JSON
         os.makedirs("tmp", exist_ok=True)
         output_file = "tmp/articles_mistral.json"
         with open(output_file, "w", encoding="utf-8") as file:
@@ -209,9 +213,9 @@ if __name__ == "__main__":
             
         print(f"\nFinish! Check the results in: {output_file}")
         
-        # Exibe o melhor preço encontrado pela IA
+        # Show best price find for IA
         if results:
             best_deal = min(results, key=lambda x: x['price_int'])
-            print(f"Best Deal found by AI: {best_deal['product']} - CHF {best_deal['price_int']}")
+            print(f"🔥Best Deal found by AI: {best_deal['product']} - CHF {best_deal['price_int']}")
     else:
         print(f"File {file_path} not found. Run Playwright first.")
