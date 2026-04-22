@@ -98,6 +98,8 @@ def extract_article_data(url_target:str):
 
 
 def extract_one_article_with_ll(article_obj) -> dict:
+    link_tag = article_obj.find("a", href=True)
+    ull_url = f"https://www.digitec.ch{link_tag['href']}" if link_tag else "URL not found"
     # Transform HTML to text
     text = article_obj.get_text(separator=' ', strip=True)
 
