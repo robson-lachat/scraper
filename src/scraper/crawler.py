@@ -8,13 +8,17 @@ from bs4 import BeautifulSoup
 from mistralai.client import Mistral
 # from mistralai import Mistral
 from dotenv import load_dotenv
+from langchain_mistralai import ChatMistralAI
 
 
 # Load .env
 load_dotenv()
 
+# Get API KEY
+api_key = os.getenv("MISTRAL_API_KEY")
+
 # Config Mistral
-client = Mistral(api_key=os.getenv("MISTRAL_API_KEY"))
+client = Mistral(api_key=api_key)
 # "mistral-tiny"  "open-mistral-7b"
 model = "mistral-small-latest"
 
@@ -110,9 +114,13 @@ def extract_one_article_with_ll(article_obj) -> dict:
         print(f"Error Mistral: {e}")
         return None
 
-clinet = Mistral(api_key=api_key)
 
-client_lc = ChatMistralAI(model=model, api_key=api_key, temperature=0)
+client_lc = ChatMistralAI(
+    model=model,
+    api_key=api_key,
+    temperature=0,
+    max_retries=2
+    )
 from pydantic import BaseModel, Field
 
 class DATArticle(BaseModel):
@@ -120,12 +128,16 @@ class DATArticle(BaseModel):
     price: float
     article_url: str
 
+# Function for extract in big strutured
 def stract_one_article_data_with_structured_llm(article: str):
-    prompt= """Given an article on an e-comerce website, in html forma, as in the <ARTICLE> selection below.
-    Your task is to extract the information into a json followin the forma {DATArticle.model_json_schema()}.
+    prompt= f"""
+    Given an article on an e-comerce website, in html forma, as in the <ARTICLE> selection below.
+    Your task is to extract the information into a json followin the format:
+    {DATArticle.model_json_schema()}
     <ARTICLE>
     {article}
-    </ARTICLE>"""
+    </ARTICLE>
+    """
     res = client_lc.with_structured_output(DATArticle, method="json_mode").invoke(prompt)
     return res.model_dump_json()
 
