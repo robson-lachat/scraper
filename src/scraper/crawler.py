@@ -6,39 +6,46 @@ import json
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 from mistralai.client import Mistral
-# from mistralai import Mistral
 from dotenv import load_dotenv
 from langchain_mistralai import ChatMistralAI
+from pydantic import BaseModel
+from typing import Literal
 
-
+# --- CONFIG ---
 # Load .env
 load_dotenv()
-
 # Get API KEY
 api_key = os.getenv("MISTRAL_API_KEY")
-
 # Config Mistral
 client = Mistral(api_key=api_key)
 # "mistral-tiny"  "open-mistral-7b"
 model = "mistral-small-latest"
 
 
-def get_html_with_request(url:str) -> str:
-    response = requests.get(url)
+def get_html_with_request(url_target:str) -> str:
+    response = requests.get(url_target)
     return response.text
 
-def get_html_with_playright(url:str) -> str:
+
+# --- FUNCTION CAPTURE (CRAWLER) ---
+def get_html_with_playright(p:str) -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         page = browser.new_page()
-        page.goto(url)
+        page.goto(url_target)
+
+        # Load page target
         # page.wait_for_load_state()
-        page.wait_for_timeout(2000)
+        page.wait_for_selector("article")
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
+        page.wait_for_timeout(3000)
+        
         html_content = page.content()
         browser.close()
     return html_content
 
 
+# --- FUNCTION EXTRACT (PARSER) ---
 def get_articles(html_contet:str) -> str:
     soup = BeautifulSoup(html_contet, "html.parser")
     articles = soup.find_all("article")
@@ -47,6 +54,14 @@ def get_articles(html_contet:str) -> str:
 
 def extract_article_data_with_bs(article) -> dict:
     try:
+        text_full = article.get_text().lower()
+        # Lógica simples de busca de palavras no texto do artigo
+        # (Em francês, 'en stock' significa disponível)
+        if "en stock" in text_full or "disponible" in text_full:
+            availability_bs = "available"
+        else:
+            availability_bs = "unavailable"
+
         # 1. Try get name product
         link_tag = article.find("a", {"aria-label": True})
         name = link_tag["aria-label"] if link_tag else "Article not found"
@@ -66,8 +81,8 @@ def extract_article_data_with_bs(article) -> dict:
         if "5090" in name.upper() and price_val > 0:
             return {
                 "product": name,
-                "price_str": price_text,
-                "price_int": price_val
+                "price_int": price_val,
+                "availability": availability_bs
             }
     except Exception as e:
         # print(f"Erro ao processar um artigo: {e}")
@@ -75,29 +90,28 @@ def extract_article_data_with_bs(article) -> dict:
     return None
 
 
-def extract_article_data(url:str):
-    html_content = get_html_with_playright(url)
+def extract_article_data(url_target:str):
+    html_content = get_html_with_playright(url_target)
     articles = get_articles(html_content)
     results = [extract_article_data_with_bs(article) for article in articles]
     return results
 
 
 def extract_one_article_with_ll(article_obj) -> dict:
-    """
-    Use Mistral AI for extract data in HTML.
-    """
     # Transform HTML to text
     text = article_obj.get_text(separator=' ', strip=True)
 
     prompt = f"""
-    From the following product text, extract the information in JSON:
-    - product: full name
-    - price_int: only the price number (integer)
-    - brand: the manufacturer's brand
+    Extract the following information in JSON format from the product text:
+    - article_name: full name
+    - price: the price number as a float
+    - brand: manufacturer brand
+    - availability: return ONLY "available" if the product is in stock/ready to ship, 
+                    or "unavailable" if it is out of stock/sold out.
 
     If the product is not an RTX 5090 graphics card, return null.
 
-    Text: {text}
+    Text to analyze: {text}
     """
 
     try:
@@ -125,12 +139,14 @@ client_lc = ChatMistralAI(
     max_retries=2
     )
 
-from pydantic import BaseModel, Field
 
+# --- MODEL DATA (Exercice 1) ---
 class DATArticle(BaseModel):
     article_name: str
     price: float
+    brand: str
     article_url: str
+    availability: Literal["available", "unavailable"]
 
 # Function for extract in big strutured
 def stract_one_article_data_with_structured_llm(article: str):
@@ -145,77 +161,85 @@ def stract_one_article_data_with_structured_llm(article: str):
     res = client_lc.with_structured_output(DATArticle, method="json_mode").invoke(prompt)
     return res.model_dump_json()
 
+
+
+# --- FUNÇÕES DE ANÁLISE E RELATÓRIO ---
+def run_ai_processing(articles: list, limit: int = 5) -> list[dict]:
+    """Loop de processamento dos artigos com IA."""
+    results = []
+    count = 0
+    print(f"\n--- Iniciando Extração com IA (Limite: {limit}) ---")
+    
+    for art in articles:
+        if count >= limit:
+            break
+            
+        # Filtro rápido de texto antes de gastar tokens com a IA
+        if "5090" in art.get_text():
+            print(f"Analisando item {count + 1}...")
+            data = extract_one_article_with_ll(art)
+            if data:
+                results.append(data)
+                count += 1
+    return results
+
+def generate_report(results: list[dict]):
+    """Calcula o melhor preço e exibe o relatório final."""
+    if not results:
+        print("\n[!] Nenhum resultado válido encontrado para o relatório.")
+        return
+
+    print("\n" + "="*50)
+    print("📋 RELATÓRIO DE PREÇOS RTX 5090")
+    print("="*50)
+
+    for res in results:
+        status = "✅" if res['availability'] == "available" else "❌"
+        print(f"{status} {res['article_name']} | CHF {res['price']}")
+
+    # Cálculo de Melhor Preço (Apenas entre os disponíveis!)
+    available_items = [r for r in results if r['availability'] == "available"]
+    
+    if available_items:
+        best_deal = min(available_items, key=lambda x: x['price'])
+        print("-" * 50)
+        print(f"🔥 MELHOR OFERTA DISPONÍVEL: {best_deal['article_name']}")
+        print(f"💰 Preço: CHF {best_deal['price']}")
+        print(f"🔗 Link: {best_deal['article_url']}")
+    else:
+        print("\n⚠️ Nenhuma placa disponível em estoque no momento.")
+    print("="*50)
+
+
 if __name__ == "__main__":
     
-    url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
+    url_target = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
+    path_html = "tmp/5090_p.html"
+    os.makedirs("tmp", exist_ok=True)
 
-    file_path = "tmp/5090_p.html"
-    
-    # html_content = get_html_with_request(eurl)
-    # html_content = get_html_with_playright(url)
-    # html_content = get_html_with_playright(url)
-    # with open("tmp/5090_p.html", "w") as file:
-    #     file.write(html_content)
+    # PARTE 1: Captura (Descomente para atualizar o arquivo local)
+    # print("Executando Passo 1: Captura de HTML...")
+    # html_raw = get_html_with_playright(url_target)
+    # with open(path_html, "w", encoding="utf-8") as f:
+    #     f.write(html_raw)
 
-    # if os.path.exists(file_path):
-    #     with open(file_path, "r", encoding="utf-8") as f:
-    #         html_content = f.read()
+    # PARTE 2: Processamento e Relatório
+    if os.path.exists(path_html):
+        with open(path_html, "r", encoding="utf-8") as f:
+            conteudo = f.read()
+        
+        # A) Busca os blocos de artigos
+        lista_artigos = get_articles(conteudo)
+        
+        # B) Processa com IA (Pode comentar/uncomentar para testar)
+        meus_resultados = run_ai_processing(lista_artigos, limit=5)
+        
+        # C) Gera Relatório (Sua nova função de cálculo!)
+        generate_report(meus_resultados)
+        
+        # D) Salva em JSON para persistência
+        with open("tmp/articles_mistral.json", "w", encoding="utf-8") as f:
+            json.dump(meus_resultados, f, ensure_ascii=False, indent=2)
             
-    #     articles = get_articles(html_content)
-    #     results = []
-        
-    #     for art in articles:
-    #         data = extract_article_data_with_bs(art)
-    #         if data:
-    #             results.append(data)
-        
-    #     # Order by minor price
-    #     results = sorted(results, key=lambda x: x["price_int"])
-        
-    #     # Save JSON file
-    #     os.makedirs("tmp", exist_ok=True)
-    #     with open("tmp/articles.json", "w", encoding="utf-8") as file:
-    #         json.dump(results, file, ensure_ascii=False, indent=2)
-            
-    #     print(f"\nExtract finish {len(results)} real offert faund.")
-    #     for res in results:
-    #         print(f"Price: {res['price_str']} | Product: {res['product']}")
-    # else:
-    #     print(f"File {file_path} not found. Run Playwright frist.")
-
-    if os.path.exists(file_path):
-        with open(file_path, "r", encoding="utf-8") as f:
-            html_content = f.read()
-            
-        articles = get_articles(html_content)
-        results = []
-        
-        print(f"\n--- Starting Mistral AI Extraction ---")
-        
-        # We limited it to 3 for initial testing and token conservation.
-        count = 0
-        for art in articles:
-            # Basic filter afther to send for IA (processse economyc)
-            if "5090" in art.get_text() and count < 5:
-                print(f"Analyzing item {count + 1} with IA...")
-                data = extract_one_article_with_ll(art)
-                
-                # If the AI ​​returns the object (and not null), we add
-                if data and data != "null":
-                    results.append(data)
-                    count += 1
-
-        # Save final results JSON
-        os.makedirs("tmp", exist_ok=True)
-        output_file = "tmp/articles_mistral.json"
-        with open(output_file, "w", encoding="utf-8") as file:
-            json.dump(results, file, ensure_ascii=False, indent=2)
-            
-        print(f"\nFinish! Check the results in: {output_file}")
-        
-        # Show best price find for IA
-        if results:
-            best_deal = min(results, key=lambda x: x['price_int'])
-            print(f"🔥Best Deal found by AI: {best_deal['product']} - CHF {best_deal['price_int']}")
     else:
-        print(f"File {file_path} not found. Run Playwright first.")
+        print(f"Arquivo {path_html} não encontrado. Ative a PARTE 1.")
