@@ -109,7 +109,7 @@ def analyze_single_chunk(base64_image: str) -> dict:
     Extract the information on the article.
     
     Return the result in json format. 
-    Here is the schema to follow: {RTXProduct.model_json_schema()}   """
+    Target Schema: {RTXProduct.model_json_schema()}   """
 
     messages = [
         {
@@ -124,7 +124,8 @@ def analyze_single_chunk(base64_image: str) -> dict:
     response = client.chat.complete(
         model=model,
         messages=messages,
-        response_format={"type": "json_object"}
+        response_format={"type": "json_object"},
+        temperature=0
     )
 
     # 1. Parse the raw string into a dict
