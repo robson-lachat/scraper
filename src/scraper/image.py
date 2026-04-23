@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from typing import List, Literal
 
-# teste
 # --- CONFIG ---
 # Load .env
 load_dotenv()
