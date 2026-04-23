@@ -19,11 +19,13 @@ model = "mistral-small-latest"
 
 
 # --- DATA MODELS (Pydantic) ---
+
+
 class RTXProduct(BaseModel):
     manufacturer: str = Field(
-        description="GPU manufacturer (e.g., ASUS, MSI, Gigabyte, Zotac)")
+        description="GPU manufacturer")
     model_name: str = Field(description="Full product model name")
-    price_chf: float = Field(description="Numerical price value in CHF")
+    price: float = Field(description="Numerical price value")
     availability: Literal["available", "unavailable"] = Field(
         description="Stock status on the website")
 
@@ -35,12 +37,13 @@ class RTXList(BaseModel):
 # --- CORE MODULES ---
 
 
-def capture_full_page_screenshot(url: str, output_path: str):
+def capture_product_chunks(target_url: str, output_dir: str, limit: int = 10) -> List[str]:
     """
-    Handles Playwright browser instance to capture a full-page image.
-    Includes scrolling logic to trigger lazy-loading of product images.
+    Finds all product containers and takes individual screenshots of each.
+    This avoids resolution issues and memory limits.
     """
-    print(f"[*] Starting browser to capture: {url}")
+    image_paths = []
+    print(f"[*] Navigating to: {target_url}")
 
     with sync_playwright() as p:
         # Launching in headless mode for server environments
@@ -53,48 +56,60 @@ def capture_full_page_screenshot(url: str, output_path: str):
         page = context.new_page()
 
         try:
+            page.goto(target_url, wait_until="load", timeout=60000)
+
             # Navigate and wait for the initial load
-            page.goto(url, wait_until="load", timeout=60000)
+            print("[*] Waiting for product elements (article)...")
+            page.wait_for_selector("article", timeout=30000)
 
-            # Trigger lazy load: scroll to the bottom of the page
-            print("[*] Scrolling to load all dynamic content...")
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(4000)  # Wait for images to render
+            # Find all product elements
+            product_elements = page.locator("article")
+            total_count = product_elements.count()
+            count = min(total_count, limit)
 
-            # Capture the entire document length
-            page.screenshot(path=output_path, full_page=True)
-            print(f"[+] Full-page screenshot saved: {output_path}")
+            print(
+
+                f"[+] Found {total_count} items. Capturing first {count} chunks...")
+
+            for i in range(count):
+                element = product_elements.nth(i)
+                # Scroll to element so it's fully visible and loaded
+                element.scroll_into_view_if_needed()
+                # Wait a bit for images to be crisp
+                page.wait_for_timeout(1000)
+
+                chunk_path = os.path.join(output_dir, f"chunk_prod_{i}.png")
+                element.screenshot(path=chunk_path)
+                image_paths.append(chunk_path)
+                print(f"   [v] Screenshot taken for item {i}")
 
         except Exception as e:
             print(f"[!] Error during capture: {e}")
             raise e
+
         finally:
             browser.close()
 
+    return image_paths
 
-def encode_image_to_base64(image_path: str) -> str:
-    """Converts local image file to base64 string for API transmission"""
-    with open(image_path, "rb") as image_file:
-        return base64.b64encode(image_file.read()).decode('utf-8')
+# ... (The rest of the functions encode_image, analyze_single_chunk, save_analysis_to_json stay the same)
 
 
-def analyze_vision_data(base64_image: str) -> dict:
+def encode_image(image_path: str) -> str:
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode('utf-8')
+
+
+def analyze_single_chunk(base64_image: str) -> dict:
     """
-    Sends the screenshot to Mistral AI for visual analysis.
-    Requesting structured JSON output based on the Pydantic schema.
+    Analyzes a product image and strictly enforces the Pydantic model.
     """
-    print(f"[*] Analyzing image with AI Model: {model}")
-
-    # Get JSON schema from Pydantic model for the prompt
-    schema_definition = RTXList.model_json_schema()
-
     prompt = f"""
-    Extract all RTX 5090 graphics cards from this Digitec store screenshot.
-    Return the data strictly in JSON format matching this schema:
-    {json.dumps(schema_definition, indent=2)}
+    The given image is the screenshot of a GPU article on a e-commerce website.
+    Extract the information on the article.
     
-    Ensure price_chf is a clean float and availability is based on the stock tags.
-    """
+    Return the result in json format. 
+    Here is the schema to follow: {RTXProduct.model_json_schema()}   """
 
     messages = [
         {
@@ -112,7 +127,22 @@ def analyze_vision_data(base64_image: str) -> dict:
         response_format={"type": "json_object"}
     )
 
-    return json.loads(response.choices[0].message.content)
+    # 1. Parse the raw string into a dict
+    raw_data = json.loads(response.choices[0].message.content)
+
+    # 2. FIX: Check if the AI wrapped the data inside 'properties'
+    if "properties" in raw_data:
+        raw_data = raw_data["properties"]
+
+    # 3. ENFORCE: Use Pydantic to validate and clean the data
+    try:
+        # This is where the BaseModel actually takes control
+        validated_product = RTXProduct(**raw_data)
+        return validated_product.model_dump()
+    except Exception as e:
+        print(f" [!] Validation error, attempting fallback: {e}")
+        # Fallback logic or return a default/None
+        return raw_data
 
 
 def save_analysis_to_json(data: dict, file_path: str):
@@ -125,39 +155,37 @@ def save_analysis_to_json(data: dict, file_path: str):
 
 
 def run_visual_analysis_workflow():
-    """Main function that coordinates the execution of all steps"""
-
-    # Path settings
     base_dir = "/home/ia-user/Documents/scraper/tmp"
-    os.makedirs(base_dir, exist_ok=True)
+    chunks_dir = os.path.join(base_dir, "chunks")
+    os.makedirs(chunks_dir, exist_ok=True)
 
-    screenshot_file = os.path.join(base_dir, "digitec_rtx5090_full.png")
-    json_result_file = os.path.join(base_dir, "image_vision_results.json")
     target_url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
+    final_results = []
 
-    # Step 1: Capture Page
-    capture_full_page_screenshot(target_url, screenshot_file)
+    # Step 1: Capture individual chunks (High Resolution)
+    chunk_files = capture_product_chunks(target_url, chunks_dir, limit=5)
 
-    # Step 2: Prepare Image
-    base64_data = encode_image_to_base64(screenshot_file)
-
-    # Step 3: AI Vision Extraction
-    try:
-        final_data = analyze_vision_data(base64_data)
-
-        # Step 4: Save and Print Summary
-        save_analysis_to_json(final_data, json_result_file)
-
-        print("\n--- EXTRACTION SUMMARY ---")
-        for item in final_data.get("products", []):
-            stock_icon = "🟢" if item['availability'] == "available" else "🔴"
+    # Step 2 & 3: Encode and Analyze each chunk separately
+    print(f"[*] Starting AI analysis on {len(chunk_files)} images...")
+    for img_path in chunk_files:
+        try:
+            b64 = encode_image(img_path)
+            product_data = analyze_single_chunk(b64)
+            final_results.append(product_data)
             print(
-                f"{stock_icon} {item['manufacturer']} | {item['model_name']} | CHF {item['price_chf']}")
+                f"   [+] Processed: {product_data.get('model_name', 'Unknown')}")
+        except Exception as e:
+            print(f"   [!] Error analyzing {img_path}: {e}")
 
-    except Exception as e:
-        print(f"[!] Error during AI processing: {e}")
+    # Step 4: Save consolidated JSON
+    json_result_file = os.path.join(base_dir, "image_vision_results_v2.json")
+    consolidated_data = {"products": final_results}
+
+    with open(json_result_file, "w", encoding="utf-8") as f:
+        json.dump(consolidated_data, f, ensure_ascii=False, indent=2)
+
+    print(f"\n[SUCCESS] Structured data saved to: {json_result_file}")
 
 
 if __name__ == "__main__":
-    # capture_and_analyze()
     run_visual_analysis_workflow()
