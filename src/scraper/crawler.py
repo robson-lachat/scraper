@@ -99,7 +99,7 @@ def extract_article_data(url_target:str):
 
 def extract_one_article_with_ll(article_obj) -> dict:
     link_tag = article_obj.find("a", href=True)
-    ull_url = f"https://www.digitec.ch{link_tag['href']}" if link_tag else "URL not found"
+    full_url = f"https://www.digitec.ch{link_tag['href']}" if link_tag else "URL not found"
     # Transform HTML to text
     text = article_obj.get_text(separator=' ', strip=True)
 
@@ -128,7 +128,13 @@ def extract_one_article_with_ll(article_obj) -> dict:
         )
         
         content = chat_response.choices[0].message.content
-        return json.loads(content)
+        data = json.loads(content)
+    
+        if data and data != "null":
+            data['article_url'] = full_url 
+            
+        return data
+    
     except Exception as e:
         print(f"Error Mistral: {e}")
         return None
@@ -166,23 +172,28 @@ def stract_one_article_data_with_structured_llm(article: str):
 
 
 # --- FUNÇÕES DE ANÁLISE E RELATÓRIO ---
-def run_ai_processing(articles: list, limit: int = 5) -> list[dict]:
+def run_ai_processing(articles: list, limit: int = None) -> list[dict]:
     """Loop de processamento dos artigos com IA."""
     results = []
     count = 0
-    print(f"\n--- Iniciando Extração com IA (Limite: {limit}) ---")
+
+    all_article = limit if limit else len(articles)
+
+    print(f"\n--- Iniciando Extração com IA (Limite: {all_article}) ---")
     
     for art in articles:
-        if count >= limit:
+        # Se houver um limite e ele for atingido, para. 
+        # Se limit for None, ele ignora esse 'if' e vai até o fim.
+        if limit and count >= limit:
             break
             
-        # Filtro rápido de texto antes de gastar tokens com a IA
         if "5090" in art.get_text():
-            print(f"Analisando item {count + 1}...")
+            count += 1
+            print(f"Analisando item {count}...")
             data = extract_one_article_with_ll(art)
             if data:
                 results.append(data)
-                count += 1
+
     return results
 
 def generate_report(results: list[dict]):
@@ -234,7 +245,7 @@ if __name__ == "__main__":
         lista_artigos = get_articles(conteudo)
         
         # B) Processa com IA (Pode comentar/uncomentar para testar)
-        meus_resultados = run_ai_processing(lista_artigos, limit=5)
+        meus_resultados = run_ai_processing(lista_artigos, limit=None)
         
         # C) Gera Relatório (Sua nova função de cálculo!)
         generate_report(meus_resultados)
