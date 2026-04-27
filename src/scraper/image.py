@@ -156,8 +156,10 @@ def save_analysis_to_json(data: dict, file_path: str):
 
 
 def run_visual_analysis_workflow():
-    base_dir = "/home/ia-user/Documents/scraper/tmp"
+    project_root = os.getcwd()
+    base_dir = os.path.join(project_root, "tmp")
     chunks_dir = os.path.join(base_dir, "chunks")
+
     os.makedirs(chunks_dir, exist_ok=True)
 
     target_url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
