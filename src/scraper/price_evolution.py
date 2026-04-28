@@ -79,47 +79,47 @@ def get_links_from_local_html(html_path: str, limit: int = 5) -> List[str]:
 
 
 def fetch_trend_text_live(product_url: str) -> Optional[str]:
-    print(f"[*] Analisando detalhes: {product_url}")
+    print(f"[*] Analyzing details: {product_url}")
 
-    # Uso recomendado pela documentação do playwright-stealth
+    # Recommended usage from playwright-stealth documentation
     with Stealth().use_sync(sync_playwright()) as p:
         browser = p.chromium.launch(headless=False)
         page = browser.new_page()
 
         try:
-            # 1. Navega e espera o carregamento inicial
+            # 1. Navigate to the product URL
             page.goto(product_url)
 
-            # 2. Localiza o botão e rola até ele (substitui o scroll de 4000px)
+            # 2. Locate the button and scroll into view (replaces manual 4000px scroll)
             button = page.locator("#priceHistoryBlock")
             button.scroll_into_view_if_needed()
 
-            # 3. Clica para gerar o gráfico no DOM
-            print("    [+] Abrindo gráfico...")
+            # 3. Click to render the chart in the DOM
+            print("    [+] Opening chart...")
             button.click()
 
-            # 4. O "PULO DO GATO": Esperar o seletor mantém o script aberto
-            # até que o gráfico realmente apareça
+            # 4. Wait for the chart selector to keep the script active until it appears
             page.wait_for_selector(
-                "svg.recharts-surface", state="visible", timeout=15000)
-            page.wait_for_timeout(2000)  # Tempo para o JS desenhar os números
+                "svg.recharts-surface", state="visible", timeout=3000)
+            # Allow time for JS to render the numbers
+            page.wait_for_timeout(2000)
 
-            # 5. Extração Direta
+            # 5. Direct Extraction
             summary = ""
             summary_loc = page.locator("p.yAa8UXh").first
             if summary_loc.is_visible():
                 summary = summary_loc.inner_text()
 
-            # Captura labels do gráfico
+            # Capture chart labels from SVG
             labels = page.locator(
                 "svg.recharts-surface text").all_inner_texts()
             chart_data = " | ".join([l.strip() for l in labels if l])
 
-            print(f"    [v] Captura concluída: {len(labels)} labels.")
-            return f"Resumo: {summary} \nDados: {chart_data}"
+            print(f"    [v] Capture complete: {len(labels)} labels found.")
+            return f"Summary: {summary} \nData: {chart_data}"
 
         except Exception as e:
-            print(f"   [!] Erro na captura: {e}")
+            print(f"   [!] Capture error: {e}")
             return None
         finally:
             browser.close()
@@ -169,7 +169,7 @@ def run_price_evolution_workflow():
     capture_main_search_page(search_url, path_html)
 
     # 2. Extrair e salvar a LISTA de links (Primeiro JSON)
-    urls = get_links_from_local_html(path_html, limit=2)
+    urls = get_links_from_local_html(path_html, limit=4)
     with open(path_list_json, "w", encoding="utf-8") as f:
         json.dump({"captured_urls": urls}, f, indent=2)
     print(f"[+] Product list saved to {path_list_json}")

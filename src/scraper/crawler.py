@@ -22,13 +22,13 @@ client = Mistral(api_key=api_key)
 model = "mistral-small-latest"
 
 
-def get_html_with_request(url_target:str) -> str:
+def get_html_with_request(url_target: str) -> str:
     response = requests.get(url_target)
     return response.text
 
 
 # --- FUNCTION CAPTURE (CRAWLER) ---
-def get_html_with_playright(p:str) -> str:
+def get_html_with_playright(p: str) -> str:
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         page = browser.new_page()
@@ -39,18 +39,19 @@ def get_html_with_playright(p:str) -> str:
         page.wait_for_selector("article")
         page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
         page.wait_for_timeout(3000)
-        
+
         html_content = page.content()
         browser.close()
     return html_content
 
 
 # --- FUNCTION EXTRACT (PARSER) ---
-def get_articles(html_contet:str) -> str:
+def get_articles(html_contet: str) -> str:
     soup = BeautifulSoup(html_contet, "html.parser")
     articles = soup.find_all("article")
     print(f"Found {len(articles)}")
     return articles
+
 
 def extract_article_data_with_bs(article) -> dict:
     try:
@@ -65,7 +66,7 @@ def extract_article_data_with_bs(article) -> dict:
         # 1. Try get name product
         link_tag = article.find("a", {"aria-label": True})
         name = link_tag["aria-label"] if link_tag else "Article not found"
-        
+
         # 2. Find price block (class 'yRGTUHk')
         price_block = article.find("div", class_="yRGTUHk")
         if price_block:
@@ -90,7 +91,7 @@ def extract_article_data_with_bs(article) -> dict:
     return None
 
 
-def extract_article_data(url_target:str):
+def extract_article_data(url_target: str):
     html_content = get_html_with_playright(url_target)
     articles = get_articles(html_content)
     results = [extract_article_data_with_bs(article) for article in articles]
@@ -122,19 +123,19 @@ def extract_one_article_with_ll(article_obj) -> dict:
             messages=[
                 {"role": "user",
                  "content": prompt
-                },
+                 },
             ],
-            response_format={"type": "json_object"} 
+            response_format={"type": "json_object"}
         )
-        
+
         content = chat_response.choices[0].message.content
         data = json.loads(content)
-    
+
         if data and data != "null":
-            data['article_url'] = full_url 
-            
+            data['article_url'] = full_url
+
         return data
-    
+
     except Exception as e:
         print(f"Error Mistral: {e}")
         return None
@@ -145,7 +146,7 @@ client_lc = ChatMistralAI(
     api_key=api_key,
     temperature=0,
     max_retries=2
-    )
+)
 
 
 # --- MODEL DATA (Exercice 1) ---
@@ -157,8 +158,10 @@ class DATArticle(BaseModel):
     availability: Literal["available", "unavailable"]
 
 # Function for extract in big strutured
+
+
 def stract_one_article_data_with_structured_llm(article: str):
-    prompt= f"""
+    prompt = f"""
     Given an article on an e-comerce website, in html format, as in the <ARTICLE> selection below.
     Your task is to extract the information into a json followin the format:
     {DATArticle.model_json_schema()}
@@ -166,9 +169,9 @@ def stract_one_article_data_with_structured_llm(article: str):
     {article}
     </ARTICLE>
     """
-    res = client_lc.with_structured_output(DATArticle, method="json_mode").invoke(prompt)
+    res = client_lc.with_structured_output(
+        DATArticle, method="json_mode").invoke(prompt)
     return res.model_dump_json()
-
 
 
 # --- FUNÇÕES DE ANÁLISE E RELATÓRIO ---
@@ -180,13 +183,13 @@ def run_ai_processing(articles: list, limit: int = None) -> list[dict]:
     all_article = limit if limit else len(articles)
 
     print(f"\n--- Iniciando Extração com IA (Limite: {all_article}) ---")
-    
+
     for art in articles:
-        # Se houver um limite e ele for atingido, para. 
+        # Se houver um limite e ele for atingido, para.
         # Se limit for None, ele ignora esse 'if' e vai até o fim.
         if limit and count >= limit:
             break
-            
+
         if "5090" in art.get_text():
             count += 1
             print(f"Analisando item {count}...")
@@ -195,6 +198,7 @@ def run_ai_processing(articles: list, limit: int = None) -> list[dict]:
                 results.append(data)
 
     return results
+
 
 def generate_report(results: list[dict]):
     """Calcula o melhor preço e exibe o relatório final."""
@@ -212,7 +216,7 @@ def generate_report(results: list[dict]):
 
     # Cálculo de Melhor Preço (Apenas entre os disponíveis!)
     available_items = [r for r in results if r['availability'] == "available"]
-    
+
     if available_items:
         best_deal = min(available_items, key=lambda x: x['price'])
         print("-" * 50)
@@ -225,7 +229,7 @@ def generate_report(results: list[dict]):
 
 
 if __name__ == "__main__":
-    
+
     url_target = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
     path_html = "tmp/5090_p.html"
     os.makedirs("tmp", exist_ok=True)
@@ -240,19 +244,19 @@ if __name__ == "__main__":
     if os.path.exists(path_html):
         with open(path_html, "r", encoding="utf-8") as f:
             conteudo = f.read()
-        
+
         # A) Busca os blocos de artigos
         lista_artigos = get_articles(conteudo)
-        
+
         # B) Processa com IA (Pode comentar/uncomentar para testar)
         meus_resultados = run_ai_processing(lista_artigos, limit=None)
-        
+
         # C) Gera Relatório (Sua nova função de cálculo!)
         generate_report(meus_resultados)
-        
+
         # D) Salva em JSON para persistência
         with open("tmp/articles_mistral.json", "w", encoding="utf-8") as f:
             json.dump(meus_resultados, f, ensure_ascii=False, indent=2)
-            
+
     else:
         print(f"Arquivo {path_html} não encontrado. Ative a PARTE 1.")
