@@ -80,75 +80,48 @@ def get_links_from_local_html(html_path: str, limit: int = 5) -> List[str]:
 
 def fetch_trend_text_live(product_url: str) -> Optional[str]:
     print(f"[*] Analisando detalhes: {product_url}")
+
+    # Uso recomendado pela documentação do playwright-stealth
     with Stealth().use_sync(sync_playwright()) as p:
-        browser = p.chromium.launch(
-            headless=False)
-        context = browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-        page = context.new_page()
-        page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        browser = p.chromium.launch(headless=False)
+        page = browser.new_page()
 
         try:
+            # 1. Navega e espera o carregamento inicial
             page.goto(product_url)
 
-            # Scroll para garantir que o botão seja carregado
-            page.evaluate("window.scrollTo(0, 4000)")
+            # 2. Localiza o botão e rola até ele (substitui o scroll de 4000px)
+            button = page.locator("#priceHistoryBlock")
+            button.scroll_into_view_if_needed()
 
-            selector_btn = "#priceHistoryBlock"
+            # 3. Clica para gerar o gráfico no DOM
+            print("    [+] Abrindo gráfico...")
+            button.click()
+
+            # 4. O "PULO DO GATO": Esperar o seletor mantém o script aberto
+            # até que o gráfico realmente apareça
             page.wait_for_selector(
-                selector_btn, state="attached", timeout=15000)
-            button = page.locator(selector_btn)
+                "svg.recharts-surface", state="visible", timeout=15000)
+            page.wait_for_timeout(2000)  # Tempo para o JS desenhar os números
 
-            # Verificamos se precisa clicar
-            expanded = button.get_attribute("aria-expanded")
-            if expanded == "false" or expanded is None:
-                print("    [+] Abrindo gráfico via JS Dispatch...")
-                # Usamos dispatch_event para simular um clique real no nível do motor do navegador
-                button.dispatch_event("click")
-
-            # --- ESPERA PELO SVG ---
-            print("    [*] Aguardando gráfico aparecer...")
-            try:
-                # Aumentamos para 15s porque o gráfico do Digitec é lento
-                page.wait_for_selector(
-                    "svg.recharts-surface", state="visible", timeout=15000)
-                # Tempo para os números serem desenhados
-                page.wait_for_timeout(2000)
-            except:
-                print("    [!] O gráfico não apareceu. Tirando print de erro...")
-                page.screenshot(path="erro_grafico.png")
-                return None
-
-            # --- EXTRAÇÃO SEGURA ---
-            summary_text = ""
+            # 5. Extração Direta
+            summary = ""
             summary_loc = page.locator("p.yAa8UXh").first
             if summary_loc.is_visible():
-                summary_text = summary_loc.inner_text()
+                summary = summary_loc.inner_text()
 
-            # Captura labels evitando o erro de NoneType
-            labels_raw = page.locator(
+            # Captura labels do gráfico
+            labels = page.locator(
                 "svg.recharts-surface text").all_inner_texts()
+            chart_data = " | ".join([l.strip() for l in labels if l])
 
-            # Filtro ultra-seguro para evitar o erro 'NoneType'
-            clean_labels = []
-            for l in labels_raw:
-                if l is not None:
-                    txt = str(l).strip()
-                    if txt:
-                        clean_labels.append(txt)
-
-            chart_data = " | ".join(clean_labels)
-            print(
-                f"    [v] Captura concluída. Labels encontrados: {len(clean_labels)}")
-
-            return f"Resumo: {summary_text} \nDados do Gráfico: {chart_data}"
+            print(f"    [v] Captura concluída: {len(labels)} labels.")
+            return f"Resumo: {summary} \nDados: {chart_data}"
 
         except Exception as e:
-            print(f"   [!] Erro durante a execução: {e}")
+            print(f"   [!] Erro na captura: {e}")
             return None
         finally:
-            page.close()
             browser.close()
 
 
