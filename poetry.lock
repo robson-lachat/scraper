@@ -1193,6 +1193,24 @@ greenlet = ">=3.1.1,<4.0.0"
 pyee = ">=13,<14"
 
 [[package]]
+name = "playwright-stealth"
+version = "2.0.3"
+description = "Make your playwright instance stealthy"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "playwright_stealth-2.0.3-py3-none-any.whl", hash = "sha256:1887ade423ab7ff8ae16d363a30a38de0b5817e1e4a29d47b74bf3a0e3dbfcb4"},
+    {file = "playwright_stealth-2.0.3.tar.gz", hash = "sha256:1d8e488fbdd8f190f1269ea8cf5d57d14df3a9f1af1001c41ee3588b2aac3133"},
+]
+
+[package.dependencies]
+playwright = ">=1.40.0"
+
+[package.extras]
+black = ["black (>=25.9.0)"]
+
+[[package]]
 name = "pycparser"
 version = "3.0"
 description = "C parser in Python"
@@ -2204,4 +2222,4 @@ cffi = ["cffi (>=1.17,<2.0) ; platform_python_implementation != \"PyPy\" and pyt
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12, < 3.15"
-content-hash = "90da0db84e17f0f3966b356d5a3ba9dad19d9739d2f3144dcf18e0d0e83af275"
+content-hash = "5fa1eb331fd3d542a2a4880693a8c8b384cb651bd1fe81a36a3e485f59d3b58a"

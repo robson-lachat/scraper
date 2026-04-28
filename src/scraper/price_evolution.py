@@ -3,6 +3,8 @@ import json
 import re
 from typing import List, Literal, Optional
 from playwright.sync_api import sync_playwright
+from playwright_stealth import Stealth
+from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
 from mistralai.client import Mistral
 from pydantic import BaseModel, Field
@@ -77,27 +79,76 @@ def get_links_from_local_html(html_path: str, limit: int = 5) -> List[str]:
 
 
 def fetch_trend_text_live(product_url: str) -> Optional[str]:
-    """Navigates to product page and extracts price history text."""
-    print(f"[*] Navigating to details: {product_url}")
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=[
-                                    "--disable-http2", "--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(user_agent="Mozilla/5.0 ...")
+    print(f"[*] Analisando detalhes: {product_url}")
+    with Stealth().use_sync(sync_playwright()) as p:
+        browser = p.chromium.launch(
+            headless=False)
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         page = context.new_page()
+        page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
         try:
-            page.goto(product_url, wait_until="domcontentloaded", timeout=60000)
-            history_selector = "[data-test='priceHistoryBlock']"
-            page.wait_for_selector(history_selector, timeout=15000)
-            button = page.locator(history_selector)
-            if button.get_attribute("aria-expanded") == "false":
-                button.click()
+            page.goto(product_url)
+
+            # Scroll para garantir que o botão seja carregado
+            page.evaluate("window.scrollTo(0, 4000)")
+
+            selector_btn = "#priceHistoryBlock"
+            page.wait_for_selector(
+                selector_btn, state="attached", timeout=15000)
+            button = page.locator(selector_btn)
+
+            # Verificamos se precisa clicar
+            expanded = button.get_attribute("aria-expanded")
+            if expanded == "false" or expanded is None:
+                print("    [+] Abrindo gráfico via JS Dispatch...")
+                # Usamos dispatch_event para simular um clique real no nível do motor do navegador
+                button.dispatch_event("click")
+
+            # --- ESPERA PELO SVG ---
+            print("    [*] Aguardando gráfico aparecer...")
+            try:
+                # Aumentamos para 15s porque o gráfico do Digitec é lento
+                page.wait_for_selector(
+                    "svg.recharts-surface", state="visible", timeout=15000)
+                # Tempo para os números serem desenhados
                 page.wait_for_timeout(2000)
-            trend_paragraph = page.locator("p.yAa8UXh").first
-            return trend_paragraph.inner_text() if trend_paragraph.is_visible() else None
+            except:
+                print("    [!] O gráfico não apareceu. Tirando print de erro...")
+                page.screenshot(path="erro_grafico.png")
+                return None
+
+            # --- EXTRAÇÃO SEGURA ---
+            summary_text = ""
+            summary_loc = page.locator("p.yAa8UXh").first
+            if summary_loc.is_visible():
+                summary_text = summary_loc.inner_text()
+
+            # Captura labels evitando o erro de NoneType
+            labels_raw = page.locator(
+                "svg.recharts-surface text").all_inner_texts()
+
+            # Filtro ultra-seguro para evitar o erro 'NoneType'
+            clean_labels = []
+            for l in labels_raw:
+                if l is not None:
+                    txt = str(l).strip()
+                    if txt:
+                        clean_labels.append(txt)
+
+            chart_data = " | ".join(clean_labels)
+            print(
+                f"    [v] Captura concluída. Labels encontrados: {len(clean_labels)}")
+
+            return f"Resumo: {summary_text} \nDados do Gráfico: {chart_data}"
+
         except Exception as e:
-            print(f"   [!] Error on {product_url}: {e}")
+            print(f"   [!] Erro durante a execução: {e}")
             return None
         finally:
+            page.close()
             browser.close()
 
 
