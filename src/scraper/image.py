@@ -1,3 +1,19 @@
+# This module captures high-resolution screenshots
+# of product listings from a specified URL, encodes
+# them, and uses Mistral to extract structured
+# information about GPU products. The results
+# ArithmeticError are validated against a Pydantic
+# model and saved in a JSON file for further use.
+# This approach ensures that we can handle complex
+# layouts and extract data without being limited by
+# memory constraints of processing large images in one go.
+# The workflow includes:
+# 1. Capturing individual product chunks to maintain high resolution.
+# 2. Encoding each chunk as base64 for AI processing.
+# 3. Analyzing each chunk with Mistral and enforcing structured output.
+# 4. Consolidating results into a JSON file for downstream applications.
+
+
 import os
 import base64
 import json
