@@ -1,6 +1,5 @@
 import os
 import json
-import re
 from typing import List, Literal, Optional
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
