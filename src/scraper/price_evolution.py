@@ -32,16 +32,31 @@ AI_MODEL = "mistral-small-latest"
 
 
 class PriceTrendAnalysis(BaseModel):
-    current_price: float = Field(description="The latest price shown today")
+    current_price: float = Field(
+        description="The latest price shown today"
+    )
     lowest_price_detected: float = Field(
-        description="The lowest price in the historical period")
+        description="The lowest price in the historical period"
+    )
     highest_price_detected: float = Field(
-        description="The peak price in the historical period")
+        description="The peak price in the historical period"
+    )
     trend_status: Literal["increasing", "decreasing", "stable", "volatile"] = Field(
         description="The movement of the price in the recent period"
     )
     analysis_summary: str = Field(
-        description="Brief explanation of the price movement")
+        description="Brief explanation of the price movement"
+    )
+    recommendation: Literal["BUY", "WAIT", "DON'T BUY"] = Field(
+        description="Final verdict: is it a good time to buy?"
+    )
+
+
+class ProductFilter(BaseModel):
+    is_gpu: bool = Field(
+        description="True if the product is an internal graphics card, False if it is an accessory, box, or cable.")
+    product_name: str
+    url: str
 
 # --- CORE MODULES ---
 
@@ -69,25 +84,68 @@ def capture_main_search_page(url: str, output_path: str):
             browser.close()
 
 
-def get_links_from_local_html(html_path: str, limit: int = 5) -> List[str]:
-    """Parses local HTML to extract product URLs."""
+def filter_list_with_ai(candidates: List[dict]) -> List[dict]:
+    """Uses Mistral to filter out accessories from the initial list."""
+    if not candidates:
+        return []
+
+    print(f"[*] AI is filtering {len(candidates)} candidates...")
+
+    prompt = f"""
+    Analyze this list of products from a hardware store. 
+    Identify which ones are actual INTERNAL GRAPHICS CARDS (GPU) and which are accessories/boxes/eGPUs.
+    Return a JSON list of objects with 'is_gpu' (boolean), 'product_name', and 'url'.
+    
+    Candidates: {json.dumps(candidates)}
+    """
+
+    response = CLIENT.chat.complete(
+        model=AI_MODEL,
+        messages=[{"role": "user", "content": prompt}],
+        response_format={"type": "json_object"},
+        temperature=0
+    )
+
+    data = json.loads(response.choices[0].message.content)
+    # Adjust depending on how the AI structures the response, we get the list (adjust if necessary)
+    results = data.get("products", data) if isinstance(data, dict) else data
+
+    # Return only the items that the AI confirmed are GPUs
+    filtered = [item for item in results if item.get("is_gpu") is True]
+    print(f"[+] AI kept {len(filtered)} valid GPUs.")
+    return filtered
+
+
+def get_links_from_local_html(html_path: str, limit: int = 10) -> List[dict]:
+    """Parses local HTML to extract product URLs and names."""
     if not os.path.exists(html_path):
         return []
+
     with open(html_path, "r", encoding="utf-8") as f:
         soup = BeautifulSoup(f.read(), "html.parser")
-    links = []
+
+    products = []
     for art in soup.find_all("article"):
+        name_tag = art.find("p", class_="yMYWssK1")
         link_tag = art.find("a", href=True)
-        if link_tag:
+
+        if name_tag and link_tag:
+            product_name = name_tag.get_text(separator=" ", strip=True)
             href = link_tag['href']
             full_url = f"https://www.digitec.ch{href}" if href.startswith(
                 "/") else href
+
             if "/product/" in full_url and "5090" in art.get_text():
-                if full_url not in links:
-                    links.append(full_url)
-        if len(links) >= limit:
+                if full_url not in [p["url"] for p in products]:
+                    products.append({
+                        "url": full_url,
+                        "product_name": product_name
+                    })
+
+        if len(products) >= limit:
             break
-    return links
+
+    return products
 
 
 def fetch_trend_text_live(product_url: str) -> Optional[str]:
@@ -110,15 +168,15 @@ def fetch_trend_text_live(product_url: str) -> Optional[str]:
             print("    [+] Opening chart...")
             button.click()
 
-            # Espera o gráfico aparecer
+            # Whait o gráfico aparecer
             svg = page.locator("svg.recharts-surface")
             svg.wait_for(state="visible")
 
-            # Salva o print com o ID do produto para não sobrescrever
+            # Save print with ID do product to avoid overwriting
             product_id = product_url.split('/')[-1]
             screenshot_path = f"tmp/chart_{product_id}.png"
             svg.screenshot(path=screenshot_path)
-            print(f"    [+] Screenshot salva em: {screenshot_path}")
+            print(f"    [+] Screenshot saved to: {screenshot_path}")
 
             # 4. Wait for the chart selector to keep the script active until it appears
             page.wait_for_selector(
@@ -158,7 +216,7 @@ def analyze_trend_with_ai(text: str) -> dict:
     print("[*] Mistral analysis...")
     schema = PriceTrendAnalysis.model_json_schema()
 
-    # Prompt mais rigoroso para evitar metadados
+    # Rigorous Prompt to avoid metadata
     prompt = f"""
     Analyze the price history text: "{text}"
     Return ONLY a flat JSON object with the data. 
@@ -175,7 +233,7 @@ def analyze_trend_with_ai(text: str) -> dict:
 
     raw_data = json.loads(response.choices[0].message.content)
 
-    # TRATAMENTO DE ERRO: Remove o "properties" se a IA teimar em incluir
+    # Error handling: Remove the "properties" key if the AI includes it
     if "properties" in raw_data:
         raw_data = raw_data["properties"]
 
@@ -185,41 +243,61 @@ def analyze_trend_with_ai(text: str) -> dict:
 
 
 def run_price_evolution_workflow():
+
+    # --- CONTROL PARAMETERS ---
+    # How many items to fetch on the search page
+    MAX_CANDIDATES = 10
+    # How many of these to analyze deeply (the "live evolution")
+    MAX_ANALYSIS = 3
+    # ------------------------------
+
     search_url = "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
     base_dir = "tmp"
     os.makedirs(base_dir, exist_ok=True)
 
-    path_html = os.path.join(base_dir, "5090_p.html")
+    path_html = os.path.join(base_dir, "search_result.html")
     path_list_json = os.path.join(base_dir, "product_list.json")
     path_evolution_json = os.path.join(base_dir, "price_evolution_final.json")
 
-    # 1. Capturar HTML da busca
+    # 1. HTML capture of search page
     capture_main_search_page(search_url, path_html)
 
-    # 2. Extrair e salvar a LISTA de links (Primeiro JSON)
-    urls = get_links_from_local_html(path_html, limit=2)
-    with open(path_list_json, "w", encoding="utf-8") as f:
-        json.dump({"captured_urls": urls}, f, indent=2)
-    print(f"[+] Product list saved to {path_list_json}")
+    # 2. Extract and save the LIST of links (First JSON)
+    candidates = get_links_from_local_html(path_html, limit=MAX_CANDIDATES)
 
-    if not urls:
+    # Check if we have candidates to analyze
+    if not candidates:
         print("[!] No URLs found.")
         return
 
+    # 3. FILTRO COM IA (Aqui a IA decide quem é GPU real)
+    # Passamos os nomes para a IA e ela nos devolve apenas os válidos
+    valid_gpus = filter_list_with_ai(candidates)
+
+    # Save the filtered list of valid GPUs (First JSON)
+    with open(path_list_json, "w", encoding="utf-8") as f:
+        json.dump(valid_gpus, f, indent=2, ensure_ascii=False)
+    print(f"\n[+] Product list saved to {path_list_json}")
+
+    # 4. Análise profunda (Apenas nos que a IA confirmou)
     final_report = []
 
-    # 3. Analisar cada item
-    for url in urls:
+    # 3. Analyze each item
+    for item in valid_gpus[:MAX_ANALYSIS]:
+        url = item['url']
+        print(f"\n[*] Deep Analyzing: {item['product_name']}")
+
         history_text = fetch_trend_text_live(url)
         if history_text:
             try:
-                # Chama a IA com o tratamento de limpeza
+                # Call the AI with the cleaning treatment
                 clean_data = analyze_trend_with_ai(history_text)
 
-                # Validação final com Pydantic
+                # Final validation with Pydantic
                 validated = PriceTrendAnalysis(**clean_data)
 
                 final_report.append({
+                    "product": item['product_name'],
                     "url": url,
                     "analysis": validated.model_dump()
                 })
@@ -230,7 +308,7 @@ def run_price_evolution_workflow():
             except Exception as e:
                 print(f" [!] AI error during validation: {e}")
 
-    # 4. Salvar Relatório de Evolução (Segundo JSON)
+    # 4. Save Evolution Report (Second JSON)
     with open(path_evolution_json, "w", encoding="utf-8") as f:
         json.dump(final_report, f, indent=2, ensure_ascii=False)
 
