@@ -13,7 +13,9 @@
 
 import os
 import json
+import base64
 from typing import List, Literal, Optional
+from unittest import result
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 from pydantic import BaseModel, Field
@@ -202,7 +204,11 @@ def fetch_trend_text_live(product_url: str) -> Optional[str]:
             chart_data = " | ".join([l.strip() for l in labels if l])
 
             print(f"    [v] Capture complete: {len(labels)} labels found.")
-            return f"Summary: {summary} \nData: {chart_data}"
+            # return f"Summary: {summary} \nData: {chart_data}"
+            return {
+                "text": f"Summary: {summary} \nData: {chart_data}",
+                "screenshot": screenshot_path
+            }
 
         except Exception as e:
             print(f"   [!] Capture error: {e}")
@@ -238,6 +244,57 @@ def analyze_trend_with_ai(text: str) -> dict:
         raw_data = raw_data["properties"]
 
     return raw_data
+
+
+# Utility function to encode images in base64 (if needed for AI input)
+
+
+def encode_image(image_path: str) -> str:
+    """Converte a imagem em base64 para envio à API."""
+    with open(image_path, "rb") as f:
+        return base64.b64encode(f.read()).decode('utf-8')
+
+
+# Optional: Function to analyze the graph visually with Vision LLM (if supported by the model)
+
+
+def analyze_graph_with_vision(image_path: str, product_name: str) -> dict:
+    """Usa Vision LLM para validar a tendência olhando para o screenshot."""
+    print(f"[*] AI Vision analysis for: {product_name}...")
+
+    base64_image = encode_image(image_path)
+
+    prompt = """
+    Analyze this price history chart for a GPU.
+    1. Look at the curve/line: is it generally going UP, DOWN, or is it FLAT?
+    2. Identify the visual LOWEST and HIGHEST points if possible.
+    3. Final Verdict: Based ONLY on the visual graph, is it a good time to buy?
+    
+    Return a JSON with: 'visual_trend', 'visual_min_price', 'visual_max_price', 'vision_recommendation'.
+    """
+
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": f"data:image/png;base64,{base64_image}"
+                }
+            ]
+        }
+    ]
+
+    response = CLIENT.chat.complete(
+        # Certifique-se que o modelo suporta Vision (ex: mistral-large-latest)
+        model=AI_MODEL,
+        messages=messages,
+        response_format={"type": "json_object"}
+    )
+
+    return json.loads(response.choices[0].message.content)
+
 
 # --- MAIN WORKFLOW ---
 
@@ -285,7 +342,26 @@ def run_price_evolution_workflow():
     # 3. Analyze each item
     for item in valid_gpus[:MAX_ANALYSIS]:
         url = item['url']
-        print(f"\n[*] Deep Analyzing: {item['product_name']}")
+        # Returns dict with 'text' and 'screenshot'
+        result = fetch_trend_text_live(url)
+
+        if result:
+            text_analysis = analyze_trend_with_ai(result['text'])
+            # Show a snippet of the text extracted for debugging
+            print(f"   [v] Text extracted: {result['text'][:100]}...")
+        # Optional: Use Vision LLM to validate the trend visually (if supported by the model)
+        vision_validation = analyze_graph_with_vision(
+            result['screenshot'], item['product_name'])
+
+        final_report.append({
+            "product": item['product_name'],
+            "text_data": text_analysis,
+            "vision_validation": vision_validation,
+            "screenshot_used": result['screenshot']
+        })
+
+        print(
+            f"   [CHECK] Text Trend: {text_analysis.get('trend_status')} | Vision Trend: {vision_validation.get('visual_trend')}")
 
         history_text = fetch_trend_text_live(url)
         if history_text:
