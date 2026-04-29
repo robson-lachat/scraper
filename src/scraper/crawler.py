@@ -1,4 +1,23 @@
 # crawler.py
+# RTX 5090 Crawler and Data Extractor
+# This module is responsible for crawling
+# the Digitec website to capture the latest
+# HTML content of the search results for
+# RTX 5090 products. It uses Playwright
+# to ensure that dynamic content is fully
+# loaded, and BeautifulSoup to parse the
+# HTML and extract relevant information
+# such as product name, price, availability,
+# and URL. The extracted data is then
+# processed with Mistral AI to structure
+# it in a consistent format for further analysis.
+# The workflow includes:
+# 1. Capturing the search results page with Playwright.
+# 2. Parsing the HTML with BeautifulSoup to find product articles.
+# 3. Extracting product details using both rule-based methods and Mistral AI for structured output.
+# 4. Generating a report of available products and their prices, highlighting the best deal.
+# Note: Ensure that the MISTRAL_API_KEY is set in the .env file for AI processing.
+
 import os
 import re
 import requests

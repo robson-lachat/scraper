@@ -1,3 +1,16 @@
+# price_evolution.py
+# Price Evolution Scraper and Analyzer
+# This module captures price history data for RTX 5090
+# products from Digitec, extracts relevant information
+# using a structured approach, and analyzes trends with
+# Mistral AI. The workflow includes:
+# 1. Capturing the search results page with Playwright to ensure fresh data.
+# 2. Parsing the HTML to extract product URLs.
+# 3. For each product, using Playwright to interact with the price history chart and extract textual data.
+# 4. Analyzing the extracted text with Mistral AI to identify current price, lowest/highest prices, and trend status.
+# 5. Generating a final report in JSON format summarizing the price evolution for each product.
+# Note: Ensure that the MISTRAL_API_KEY is set in the .env file for AI processing.
+
 import os
 import json
 from typing import List, Literal, Optional
@@ -97,11 +110,27 @@ def fetch_trend_text_live(product_url: str) -> Optional[str]:
             print("    [+] Opening chart...")
             button.click()
 
+            # Espera o gráfico aparecer
+            svg = page.locator("svg.recharts-surface")
+            svg.wait_for(state="visible")
+
+            # Salva o print com o ID do produto para não sobrescrever
+            product_id = product_url.split('/')[-1]
+            screenshot_path = f"tmp/chart_{product_id}.png"
+            svg.screenshot(path=screenshot_path)
+            print(f"    [+] Screenshot salva em: {screenshot_path}")
+
             # 4. Wait for the chart selector to keep the script active until it appears
             page.wait_for_selector(
                 "svg.recharts-surface", state="visible", timeout=3000)
             # Allow time for JS to render the numbers
             page.wait_for_timeout(2000)
+
+            # Automate the screenshot taking of this graphic element
+            # Ou o seletor pai do gráfico
+            # chart_element = page.locator(".yAa8UXh")
+            # chart_element.screenshot(
+            #     path=f"screenshot_{product_url.split('/')[-1]}.png")
 
             # 5. Direct Extraction
             summary = ""
@@ -168,7 +197,7 @@ def run_price_evolution_workflow():
     capture_main_search_page(search_url, path_html)
 
     # 2. Extrair e salvar a LISTA de links (Primeiro JSON)
-    urls = get_links_from_local_html(path_html, limit=4)
+    urls = get_links_from_local_html(path_html, limit=2)
     with open(path_list_json, "w", encoding="utf-8") as f:
         json.dump({"captured_urls": urls}, f, indent=2)
     print(f"[+] Product list saved to {path_list_json}")
