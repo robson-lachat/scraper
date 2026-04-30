@@ -6,6 +6,7 @@ from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 from pydantic import main
 from scrapegraphai.graphs import SmartScraperGraph
+from undetected_playwright import stealth_sync
 
 
 # --- CONFIG ---
@@ -35,15 +36,16 @@ def get_html_content(url: str) -> str:
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
-        context = browser.new_context()
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
 
         page = context.new_page()
-        Stealth.apply_sync(page)
+        stealth_sync(page)
 
         page.goto(url)
 
         # Load page target
-        page.wait_for_load_state("networkidle")
+        page.wait_for_load_state()
         page.evaluate("window.scrollTo(0, document.body.scrollHeight/2)")
         page.wait_for_timeout(3000)
 
@@ -52,32 +54,39 @@ def get_html_content(url: str) -> str:
     return html_content
 
 
-# --- FUNCTION EXTRACT (PARSER) ---
-def get_articles(html_contet: str) -> str:
-    soup = BeautifulSoup(html_contet, "html.parser")
+# --- MÓDULO DE ARQUIVOS ---
+def save_raw_html(html_data: str, filename: str):
+    """Garante que o diretório existe e salva o HTML bruto."""
+    if not os.path.exists(OUTPUT_DIR):
+        os.makedirs(OUTPUT_DIR)
+        print(f"[+] Diretório criado: {OUTPUT_DIR}")
 
+    file_path = os.path.join(OUTPUT_DIR, filename)
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(html_data)
+    print(f"[OK] Arquivo salvo em: {file_path}")
+
+
+# --- MÓDULO DE PROCESSAMENTO (PARSER) ---
+def parse_basic_info(html_content: str):
+    soup = BeautifulSoup(html_content, "html.parser")
+    # Aqui você poderia extrair títulos, preços, etc.
+    # Por enquanto, apenas retornamos o soup como solicitado
     return soup
 
 
-def save_files_directory(base_dir):
-    base_dir = os.getcwd()
-    output_dir = os.path.join(base_dir, "tmp", "dnc_scpg")
-
-    save_html(base_dir, "tmp", "site.html")
-
-
-# MAIN WORKFLOW
-
-
+# --- MAIN WORKFLOW ---
 def main():
     target_site = [
-        "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106"
-        # "other sites to scrape",
+        "https://www.digitec.ch/fr/search?q=rtx5090&filter=pt%3D106",
+        "https://www.interdiscount.ch/fr/search?search=rtx5090&category=Carte%2520graphique",
+        "https://www.fr.fnac.ch/SearchResult/ResultList.aspx?SCat=8!1%2c8006!2&SDM=list&Search=rtx5090&sft=1"
     ]
 
-    while len(target_site) > 0:
+    i = 0
+    while i < len(target_site):
         try:
-            html = get_html_content(target_site[0])
+            html = get_html_content(target_site[i])
 
             # --- SAVE FILES ---
             save_raw_html(html, f"site_{i}.html")
@@ -86,7 +95,8 @@ def main():
             print(f"[!] Title WEB page: {soup.title.string}")
 
         except Exception as e:
-            print(f"Error processing {target_site[0]}: {e}")
+            print(f"Error processing {target_site[i]}: {e}")
+        i += 1
 
 
 if __name__ == "__main__":
