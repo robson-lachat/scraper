@@ -15,20 +15,40 @@ import os
 import json
 import base64
 from typing import List, Literal, Optional
-from unittest import result
 from playwright.sync_api import sync_playwright
 from playwright_stealth import Stealth
 from pydantic import BaseModel, Field
 from bs4 import BeautifulSoup
-from mistralai.client import Mistral
-from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+
+# --- LLM IMPORTS ---
+from mistralai.client import Mistral
+import google.generativeai as genai
+from PIL import Image
 
 # --- CONFIGURATION ---
 load_dotenv()
-API_KEY = os.getenv("MISTRAL_API_KEY")
-CLIENT = Mistral(api_key=API_KEY)
-AI_MODEL = "mistral-small-latest"
+
+# --- LOAD API KEYS ---
+MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# --- INITIALIZE MISTRAL ---
+MISTRAL_CLIENT = Mistral(api_key=MISTRAL_API_KEY) if MISTRAL_API_KEY else None
+MISTRAL_MODEL = "mistral-small-latest"
+
+# --- INITIALIZE GEMINI ---
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    # Note: Adjust the model name based on availability and requirements
+    GEMINI_MODEL = "gemini-2.5-flash"
+    # Global variable for control workflow
+    ACTIVE_LLM = None  # Set to "mistral" or "gemini" based on which LLM you want to use
+
+
+# API_KEY = os.getenv("MISTRAL_API_KEY")
+# CLIENT = Mistral(api_key=API_KEY)
+# AI_MODEL = "mistral-small-latest"
 
 # --- DATA MODELS ---
 
@@ -86,12 +106,13 @@ def capture_main_search_page(url: str, output_path: str):
             browser.close()
 
 
+# This function uses the selected LLM to filter the list of candidates, keeping only those that are actual GPUs.
 def filter_list_with_ai(candidates: List[dict]) -> List[dict]:
-    """Uses Mistral to filter out accessories from the initial list."""
     if not candidates:
         return []
 
-    print(f"[*] AI is filtering {len(candidates)} candidates...")
+    print(
+        f"[*] {ACTIVE_LLM.upper()} is is filtering {len(candidates)} candidates...")
 
     prompt = f"""
     Analyze this list of products from a hardware store. 
@@ -101,20 +122,32 @@ def filter_list_with_ai(candidates: List[dict]) -> List[dict]:
     Candidates: {json.dumps(candidates)}
     """
 
-    response = CLIENT.chat.complete(
-        model=AI_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0
-    )
+    if ACTIVE_LLM == "mistral":
+        response = MISTRAL_CLIENT.chat.complete(
+            model=MISTRAL_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0
+        )
+        data = json.loads(response.choices[0].message.content)
 
-    data = json.loads(response.choices[0].message.content)
+    if ACTIVE_LLM == "gemini":
+        response = GEMINI_MODEL.generate_content(
+            [prompt],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0
+            )
+        )
+        data = json.loads(response.text)
+
     # Adjust depending on how the AI structures the response, we get the list (adjust if necessary)
-    results = data.get("products", data) if isinstance(data, dict) else data
+    results = data.get("products", data
+                       ) if isinstance(data, dict) else data
 
     # Return only the items that the AI confirmed are GPUs
     filtered = [item for item in results if item.get("is_gpu") is True]
-    print(f"[+] AI kept {len(filtered)} valid GPUs.")
+    print(f"[+] {ACTIVE_LLM.upper()} kept {len(filtered)} valid GPUs.")
     return filtered
 
 
@@ -219,7 +252,7 @@ def fetch_trend_text_live(product_url: str) -> Optional[str]:
 
 def analyze_trend_with_ai(text: str) -> dict:
     """Uses Mistral to extract numbers and trend, handling schema noise."""
-    print("[*] Mistral analysis...")
+    print(f"[*] {ACTIVE_LLM.upper()} analysis...")
     schema = PriceTrendAnalysis.model_json_schema()
 
     # Rigorous Prompt to avoid metadata
@@ -230,14 +263,24 @@ def analyze_trend_with_ai(text: str) -> dict:
     Format: {json.dumps(schema, indent=2)}
     """
 
-    response = CLIENT.chat.complete(
-        model=AI_MODEL,
-        messages=[{"role": "user", "content": prompt}],
-        response_format={"type": "json_object"},
-        temperature=0
-    )
+    if ACTIVE_LLM == "mistral":
+        response = MISTRAL_CLIENT.chat.complete(
+            model=MISTRAL_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0
+        )
+        raw_data = json.loads(response.choices[0].message.content)
 
-    raw_data = json.loads(response.choices[0].message.content)
+    elif ACTIVE_LLM == "gemini":
+        response = GEMINI_MODEL.generate_content(
+            [prompt],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0
+            )
+        )
+        raw_data = json.loads(response.text)
 
     # Error handling: Remove the "properties" key if the AI includes it
     if "properties" in raw_data:
@@ -247,8 +290,6 @@ def analyze_trend_with_ai(text: str) -> dict:
 
 
 # Utility function to encode images in base64 (if needed for AI input)
-
-
 def encode_image(image_path: str) -> str:
     """Converte a imagem em base64 para envio à API."""
     with open(image_path, "rb") as f:
@@ -256,13 +297,8 @@ def encode_image(image_path: str) -> str:
 
 
 # Optional: Function to analyze the graph visually with Vision LLM (if supported by the model)
-
-
 def analyze_graph_with_vision(image_path: str, product_name: str) -> dict:
-    """Usa Vision LLM para validar a tendência olhando para o screenshot."""
-    print(f"[*] AI Vision analysis for: {product_name}...")
-
-    base64_image = encode_image(image_path)
+    print(f"[*] {ACTIVE_LLM.upper()} Vision analysis for: {product_name}...")
 
     prompt = """
     Analyze this price history chart for a GPU.
@@ -273,8 +309,9 @@ def analyze_graph_with_vision(image_path: str, product_name: str) -> dict:
     Return a JSON with: 'visual_trend', 'visual_min_price', 'visual_max_price', 'vision_recommendation'.
     """
 
-    messages = [
-        {
+    if ACTIVE_LLM == "mistral":
+        base64_image = encode_image(image_path)
+        messages = [{
             "role": "user",
             "content": [
                 {"type": "text", "text": prompt},
@@ -283,22 +320,28 @@ def analyze_graph_with_vision(image_path: str, product_name: str) -> dict:
                     "image_url": f"data:image/png;base64,{base64_image}"
                 }
             ]
-        }
-    ]
+        }]
+        response = MISTRAL_CLIENT.chat.complete(
+            model=MISTRAL_MODEL,
+            messages=messages,
+            response_format="application/json",
+            temperature=0
+        )
+        return json.loads(response.text)
 
-    response = CLIENT.chat.complete(
-        # Certifique-se que o modelo suporta Vision (ex: mistral-large-latest)
-        model=AI_MODEL,
-        messages=messages,
-        response_format={"type": "json_object"}
-    )
-
-    return json.loads(response.choices[0].message.content)
+    elif ACTIVE_LLM == "gemini":
+        img = Image.open(image_path)
+        response = GEMINI_MODEL.generate_content(
+            [prompt, img],
+            generation_config=genai.GenerationConfig(
+                response_mime_type="application/json",
+                temperature=0
+            )
+        )
+        return json.loads(response.text)
 
 
 # --- MAIN WORKFLOW ---
-
-
 def run_price_evolution_workflow():
 
     # --- CONTROL PARAMETERS ---
@@ -367,7 +410,7 @@ def run_price_evolution_workflow():
         if history_text:
             try:
                 # Call the AI with the cleaning treatment
-                clean_data = analyze_trend_with_ai(history_text)
+                clean_data = analyze_trend_with_ai(history_text['text'])
 
                 # Final validation with Pydantic
                 validated = PriceTrendAnalysis(**clean_data)
@@ -391,5 +434,45 @@ def run_price_evolution_workflow():
     print(f"\n[DONE] Evolution report saved to {path_evolution_json}")
 
 
+# Optional: Function to select which LLM to use at runtime
+def select_llm():
+    """Show menu to choose the AI model."""
+    global ACTIVE_LLM, GEMINI_MODEL
+
+    print("\n" + "="*50)
+    print("🤖 SELECT THE AI MODEL")
+    print("="*50)
+    print("1. Mistral AI")
+    print("2. Google Gemini (2.5 Flash)")
+    print("="*50)
+
+    while True:
+        choice = input("\nPlease enter 1 or 2 and press Enter: ").strip()
+
+        if choice == "1":
+            if not MISTRAL_API_KEY:
+                print("[!] Error: MISTRAL_API_KEY not found in .env file!")
+                continue
+            ACTIVE_LLM = "mistral"
+            print("\n[+] Mistral AI selected. Starting scraper...\n")
+            break
+
+        elif choice == "2":
+            if not GEMINI_API_KEY:
+                print("[!] Error: GEMINI_API_KEY not found in .env file!")
+                continue
+            ACTIVE_LLM = "gemini"
+            GEMINI_MODEL = genai.GenerativeModel('gemini-1.5-flash')
+            print("\n[+] Google Gemini selected. Starting scraper...\n")
+            break
+
+        else:
+            print("[!] Invalid option. Please try again.")
+
+
 if __name__ == "__main__":
+    # 1. Select which LLM to use for the workflow
+    select_llm()
+
+    # 2. Run the main price evolution workflow
     run_price_evolution_workflow()
