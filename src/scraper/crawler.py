@@ -34,11 +34,16 @@ from typing import Literal
 # Load .env
 load_dotenv()
 # Get API KEY
+# api_key = os.getenv("GEMINI_API_KEY")
 api_key = os.getenv("MISTRAL_API_KEY")
 # Config Mistral
 client = Mistral(api_key=api_key)
-# "mistral-tiny"  "open-mistral-7b"
+"mistral-tiny"  "open-mistral-7b"
 model = "mistral-small-latest"
+
+# Config Gemini
+# client = genai.Client(api_key=api_key)
+# model = "gemini-2.5-flash"
 
 
 def get_html_with_request(url_target: str) -> str:
